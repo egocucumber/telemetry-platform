@@ -1,0 +1,222 @@
+name: telemetry
+
+x-service-env: &service-env
+  ENV: compose
+  LOG_LEVEL: info
+  KAFKA_BROKERS: kafka:9092
+  REDIS_ADDR: redis:6379
+  POSTGRES_DSN: postgres://telemetry:telemetry@timescaledb:5432/telemetry?sslmode=disable
+  OTLP_ENDPOINT: jaeger:4317
+  TRACE_SAMPLE: "0.2"
+
+x-build: &build
+  context: ..
+  dockerfile: ${DOCKERFILE:-deploy/Dockerfile}
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms512m
+    ports:
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.2.0
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    ports:
+      - "8090:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    environment:
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: telemetry
+      POSTGRES_DB: telemetry
+    ports:
+      - "5432:5432"
+    volumes:
+      - tsdb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  migrate:
+    build:
+      <<: *build
+      args:
+        SERVICE: migrate
+    environment:
+      POSTGRES_DSN: postgres://telemetry:telemetry@timescaledb:5432/telemetry?sslmode=disable
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  ingest:
+    build:
+      <<: *build
+      args:
+        SERVICE: ingest
+    environment:
+      <<: *service-env
+      GRPC_ADDR: ":8081"
+    ports:
+      - "8081:8081"
+      - "9091:9090"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  processor:
+    build:
+      <<: *build
+      args:
+        SERVICE: processor
+    environment:
+      <<: *service-env
+      BATCH_SIZE: "2000"
+      WINDOW_SIZE: 1m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
+  alerter:
+    build:
+      <<: *build
+      args:
+        SERVICE: alerter
+    environment:
+      <<: *service-env
+      ALERT_COOLDOWN: 2m
+    ports:
+      - "9093:9090"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  query:
+    build:
+      <<: *build
+      args:
+        SERVICE: query
+    environment:
+      <<: *service-env
+      HTTP_ADDR: ":8080"
+      GRPC_ADDR: ":8082"
+    ports:
+      - "${QUERY_HTTP_PORT:-8080}:8080"
+      - "8082:8082"
+      - "9094:9090"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  simulator:
+    build:
+      <<: *build
+      args:
+        SERVICE: simulator
+    environment:
+      ENV: compose
+      INGEST_ADDR: ingest:8081
+      API_KEY: demo-gateway-key
+      DEVICES: "20"
+      INTERVAL: 1s
+      INCIDENT_RATE: "0.003"
+      OTLP_ENDPOINT: jaeger:4317
+      TRACE_SAMPLE: "0.05"
+    ports:
+      - "9095:9090"
+    depends_on:
+      - ingest
+    restart: unless-stopped
+
+volumes:
+  tsdb-data:

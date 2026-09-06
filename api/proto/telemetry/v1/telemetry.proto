@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package telemetry.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message Measurement {
+  string device_id = 1;
+  string metric = 2;
+  double value = 3;
+  google.protobuf.Timestamp ts = 4;
+  uint64 seq = 5;
+  map<string, string> tags = 6;
+}
+
+enum AckStatus {
+  ACK_STATUS_UNSPECIFIED = 0;
+  ACK_STATUS_OK = 1;
+  ACK_STATUS_DUPLICATE = 2;
+  ACK_STATUS_REJECTED = 3;
+}
+
+message PublishRequest {
+  repeated Measurement measurements = 1;
+}
+
+message PublishAck {
+  string device_id = 1;
+  uint64 seq = 2;
+  AckStatus status = 3;
+  string error = 4;
+}
+
+message PublishResponse {
+  repeated PublishAck acks = 1;
+}
+
+message PublishBatchRequest {
+  repeated Measurement measurements = 1;
+}
+
+message PublishBatchResponse {
+  repeated PublishAck acks = 1;
+}
+
+service IngestService {
+  rpc Publish(stream PublishRequest) returns (stream PublishResponse);
+  rpc PublishBatch(PublishBatchRequest) returns (PublishBatchResponse);
+}
+
+message TelemetryEvent {
+  Measurement measurement = 1;
+  string gateway_id = 2;
+  google.protobuf.Timestamp ingested_at = 3;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_CRITICAL = 3;
+}
+
+enum AlertState {
+  ALERT_STATE_UNSPECIFIED = 0;
+  ALERT_STATE_FIRING = 1;
+  ALERT_STATE_RESOLVED = 2;
+}
+
+message AlertEvent {
+  string alert_id = 1;
+  int64 rule_id = 2;
+  string rule_name = 3;
+  string device_id = 4;
+  string metric = 5;
+  double value = 6;
+  double threshold = 7;
+  Severity severity = 8;
+  AlertState state = 9;
+  google.protobuf.Timestamp occurred_at = 10;
+}

@@ -1,0 +1,91 @@
+{
+  "uid": "telemetry-platform",
+  "title": "Telemetry Platform",
+  "tags": ["telemetry"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Ingest throughput (measurements/s)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (outcome) (rate(ingest_measurements_total[1m]))", "legendFormat": "{{outcome}}" }],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Ingest batch latency (p50 / p95 / p99)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(ingest_batch_seconds_bucket[1m])))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(ingest_batch_seconds_bucket[1m])))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(ingest_batch_seconds_bucket[1m])))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Processor: records/s by outcome",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (outcome) (rate(processor_records_total[1m]))", "legendFormat": "{{outcome}}" }],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Processor: batch stage latency p95",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(processor_batch_seconds_bucket[1m])))", "legendFormat": "{{stage}}" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "End-to-end age at processing (ingest → processor) p95",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(processor_event_age_seconds_bucket[1m])))", "legendFormat": "p95" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Alerts emitted / notified / suppressed",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (state) (increase(processor_alerts_total[5m]))", "legendFormat": "emitted {{state}}" },
+        { "expr": "sum by (outcome) (increase(alerter_alerts_total[5m]))", "legendFormat": "alerter {{outcome}}" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Query API latency p95 by route",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, route) (rate(query_http_seconds_bucket[5m])))", "legendFormat": "{{route}}" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 8, "type": "stat", "title": "Active rules",
+      "gridPos": { "x": 0, "y": 24, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "max(processor_rules_active)" }]
+    },
+    {
+      "id": 9, "type": "stat", "title": "Simulator round-trip p95 (send → ack)",
+      "gridPos": { "x": 6, "y": 24, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(simulator_roundtrip_seconds_bucket[1m])))" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 10, "type": "stat", "title": "Duplicates rejected at ingest (5m)",
+      "gridPos": { "x": 12, "y": 24, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(ingest_measurements_total{outcome=\"duplicate\"}[5m]))" }]
+    },
+    {
+      "id": 11, "type": "stat", "title": "DLQ records (5m)",
+      "gridPos": { "x": 18, "y": 24, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(processor_records_total{outcome=\"dlq\"}[5m]))" }]
+    }
+  ]
+}

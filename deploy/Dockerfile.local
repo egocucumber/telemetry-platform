@@ -1,0 +1,5 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG SERVICE
+COPY bin/linux/${SERVICE} /app
+USER nonroot:nonroot
+ENTRYPOINT ["/app"]

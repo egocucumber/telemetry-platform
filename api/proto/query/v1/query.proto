@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package query.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message MetricValue {
+  string metric = 1;
+  double value = 2;
+  google.protobuf.Timestamp ts = 3;
+}
+
+message GetLatestRequest {
+  string device_id = 1;
+}
+
+message GetLatestResponse {
+  string device_id = 1;
+  repeated MetricValue values = 2;
+}
+
+message HistoryPoint {
+  google.protobuf.Timestamp bucket = 1;
+  double avg = 2;
+  double min = 3;
+  double max = 4;
+  int64 count = 5;
+}
+
+message GetHistoryRequest {
+  string device_id = 1;
+  string metric = 2;
+  google.protobuf.Timestamp from = 3;
+  google.protobuf.Timestamp to = 4;
+  int64 step_seconds = 5;
+}
+
+message GetHistoryResponse {
+  repeated HistoryPoint points = 1;
+}
+
+service QueryService {
+  rpc GetLatest(GetLatestRequest) returns (GetLatestResponse);
+  rpc GetHistory(GetHistoryRequest) returns (GetHistoryResponse);
+}
